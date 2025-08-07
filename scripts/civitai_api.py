@@ -68,7 +68,7 @@ def contenttype_folder(content_type, desc=None, fromCheck=False, custom_folder=N
         if cmd_opts.lora_dir and not custom_folder:
             folder = cmd_opts.lora_dir
         else:
-            folder = folder = os.path.join(main_models, "Lora")
+            folder = os.path.join(main_models, "Lora")
         
     elif content_type == "LoCon":
         folder = os.path.join(main_models, "LyCORIS")
@@ -76,13 +76,13 @@ def contenttype_folder(content_type, desc=None, fromCheck=False, custom_folder=N
             if cmd_opts.lora_dir and not custom_folder:
                 folder = cmd_opts.lora_dir
             else:
-                folder = folder = os.path.join(main_models, "Lora")
+                folder = os.path.join(main_models, "Lora")
 
     elif content_type == "DoRA":
         if cmd_opts.lora_dir and not custom_folder:
             folder = cmd_opts.lora_dir
         else:
-            folder = folder = os.path.join(main_models, "Lora")
+            folder = os.path.join(main_models, "Lora")
             
     elif content_type == "VAE":
         if cmd_opts.vae_dir and not custom_folder:
@@ -183,17 +183,20 @@ def model_list_html(json_data):
     model_folders = set()
     
     for item in json_data['items']:
-        model_folder = os.path.join(contenttype_folder(item['type'], item['description']))
-        model_folders.add(model_folder)
+        model_folder = contenttype_folder(item['type'], item['description'])
+        if model_folder:
+            model_folders.add(model_folder)
     
     for folder in model_folders:
+        if not os.path.exists(folder):
+            continue
         for root, dirs, files in os.walk(folder, followlinks=True):
             for file in files:
                 existing_files.add(file.lower())
                 if file.endswith('.json'):
                     json_path = os.path.join(root, file)
-                    with open(json_path, 'r', encoding="utf-8") as f:
-                        try:
+                    try:
+                        with open(json_path, 'r', encoding="utf-8") as f:
                             json_file = json.load(f)
                             if isinstance(json_file, dict):
                                 sha256 = json_file.get('sha256')
@@ -201,8 +204,10 @@ def model_list_html(json_data):
                                     existing_files_sha256.add(sha256.upper())
                             else:
                                 print(f"Invalid JSON data in {json_path}. Expected a dictionary.")
-                        except Exception as e:
-                            print(f"Error decoding JSON in {json_path}: {e}")
+                    except (json.JSONDecodeError, OSError, IOError) as e:
+                        print(f"Error reading JSON file {json_path}: {e}")
+                    except Exception as e:
+                        print(f"Unexpected error reading JSON file {json_path}: {e}")
     
     for item in json_data['items']:
         model_id = item.get('id')
@@ -211,15 +216,20 @@ def model_list_html(json_data):
         installstatus = ""
         baseModel = ""
         try:
-            if 'baseModel' in item['modelVersions'][0]:
-                baseModel = item['modelVersions'][0]['baseModel']
-        except:
+            if item.get('modelVersions') and len(item['modelVersions']) > 0:
+                baseModel = item['modelVersions'][0].get('baseModel', 'Not Found')
+            else:
+                baseModel = "Not Found"
+        except (KeyError, IndexError, TypeError):
             baseModel = "Not Found"
         
         try:
-            if 'publishedAt' in item['modelVersions'][0]:
-                date = item['modelVersions'][0]['publishedAt'].split('T')[0]
-        except:
+            if item.get('modelVersions') and len(item['modelVersions']) > 0:
+                published_at = item['modelVersions'][0].get('publishedAt')
+                date = published_at.split('T')[0] if published_at else "Not Found"
+            else:
+                date = "Not Found"
+        except (KeyError, IndexError, TypeError, AttributeError):
             date = "Not Found"
         
         if item.get("nsfw"):
@@ -229,10 +239,11 @@ def model_list_html(json_data):
             if date not in sorted_models:
                 sorted_models[date] = []
         
-        if any(item['modelVersions']):
-            if len(item['modelVersions'][0]['images']) > 0:
-                media_type = item["modelVersions"][0]["images"][0]["type"]
-                image = item["modelVersions"][0]["images"][0]["url"]
+        if item.get('modelVersions') and len(item['modelVersions']) > 0:
+            images = item['modelVersions'][0].get('images', [])
+            if len(images) > 0:
+                media_type = images[0].get("type", "image")
+                image = images[0].get("url", "")
                 if media_type == "video":
                     image = image.replace("width=", "transcode=true,width=")
                     imgtag = f'<video class="video-bg" {playback} muted playsinline><source src="{image}" type="video/mp4"></video>'
@@ -280,12 +291,13 @@ def model_list_html(json_data):
             HTML += model_card
     
     if gl.sortNewest:
+        html_parts = []
         for date, cards in sorted(sorted_models.items(), reverse=True):
-            HTML += f'<div class="date-section"><h4>{date}</h4><hr style="margin-bottom: 5px; margin-top: 5px;">'
-            HTML += '<div class="card-row">'
-            for card in cards:
-                HTML += card
-            HTML += '</div></div>'
+            html_parts.append(f'<div class="date-section"><h4>{date}</h4><hr style="margin-bottom: 5px; margin-top: 5px;">')
+            html_parts.append('<div class="card-row">')
+            html_parts.extend(cards)
+            html_parts.append('</div></div>')
+        HTML += ''.join(html_parts)
             
     HTML += '</div>'
     return HTML
@@ -509,28 +521,32 @@ def update_model_versions(model_id, json_input=None):
                     version_filename = f"{version_filename}_{version_file['id']}{version_extension}"
                     version_files.add((version['name'], version_filename, file_sha256))
 
-            for root, _, files in os.walk(model_folder, followlinks=True):
-                for file in files:
-                    if file.endswith('.json'):
-                        try:
-                            json_path = os.path.join(root, file)
-                            with open(json_path, 'r', encoding="utf-8") as f:
-                                json_data = json.load(f)
-                                if isinstance(json_data, dict):
-                                    if 'sha256' in json_data and json_data['sha256']:
-                                        sha256 = json_data.get('sha256', "").upper()
-                                        for version_name, _, file_sha256 in version_files:
-                                            if sha256 == file_sha256:
-                                                installed_versions.add(version_name)
-                                                break
-                        except Exception as e:
-                            print(f"failed to read: \"{file}\": {e}")
+            if os.path.exists(model_folder):
+                for root, _, files in os.walk(model_folder, followlinks=True):
+                    for file in files:
+                        if file.endswith('.json'):
+                            try:
+                                json_path = os.path.join(root, file)
+                                with open(json_path, 'r', encoding="utf-8") as f:
+                                    json_data = json.load(f)
+                                    if isinstance(json_data, dict):
+                                        sha256 = json_data.get('sha256')
+                                        if sha256:
+                                            sha256 = sha256.upper()
+                                            for version_name, _, file_sha256 in version_files:
+                                                if sha256 == file_sha256:
+                                                    installed_versions.add(version_name)
+                                                    break
+                            except (json.JSONDecodeError, OSError, IOError) as e:
+                                print(f"Failed to read JSON file \"{file}\": {e}")
+                            except Exception as e:
+                                print(f"Unexpected error reading JSON file \"{file}\": {e}")
 
-                    #filename_check
-                    for version_name, version_filename, _ in version_files:
-                        if file.lower() == version_filename.lower():
-                            installed_versions.add(version_name)
-                            break
+                        # filename_check
+                        for version_name, version_filename, _ in version_files:
+                            if file.lower() == version_filename.lower():
+                                installed_versions.add(version_name)
+                                break
 
             version_names = list(versions_dict.keys())
             display_version_names = [f"{v} [Installed]" if v in installed_versions else v for v in version_names]
@@ -558,7 +574,8 @@ def fetch_and_process_image(image_url):
     try:
         parsed_url = urllib.parse.urlparse(image_url)
         if parsed_url.scheme and parsed_url.netloc:
-            response = requests.get(image_url, proxies=proxies, verify=ssl)
+            response = requests.get(image_url, proxies=proxies, verify=ssl, timeout=30)
+            response.raise_for_status()
             if response.status_code == 200:
                 image = Image.open(BytesIO(response.content))
                 geninfo, _ = read_info_from_image(image)
@@ -567,7 +584,11 @@ def fetch_and_process_image(image_url):
             image = Image.open(image_url)
             geninfo, _ = read_info_from_image(image)
             return geninfo
-    except:
+    except (requests.RequestException, OSError, IOError) as e:
+        print(f"Error fetching/processing image from {image_url}: {e}")
+        return None
+    except Exception as e:
+        print(f"Unexpected error processing image from {image_url}: {e}")
         return None
 
 def extract_model_info(input_string):
@@ -872,35 +893,37 @@ def update_model_info(model_string=None, model_version=None, only_html=False, in
         default_subfolder = "None"
         sub_folders = _file.getSubfolders(model_folder, output_basemodel, nsfw, model_uploader, model_name, model_id, version_name, version_id)
 
-        for root, dirs, files in os.walk(model_folder, followlinks=True):
-            for filename in files:
-                if filename.endswith('.json'):
-                    json_file_path = os.path.join(root, filename)
-                    with open(json_file_path, 'r', encoding="utf-8") as f:
-                        try:
-                            data = json.load(f)
-                            sha256 = data.get('sha256')
-                            if sha256:
-                                sha256 = sha256.upper()
-                            if sha256 == sha256_value:
-                                folder_location = root
-                                BtnDownInt = False
-                                BtnDel = True
-                                
-                                break
-                        except Exception as e:
-                            print(f"Error decoding JSON: {str(e)}")
-            else:
-                #filename_check
+        if os.path.exists(model_folder):
+            for root, dirs, files in os.walk(model_folder, followlinks=True):
                 for filename in files:
-                    if filename.lower() == model_filename.lower() or filename.lower() == cleaned_name(model_filename).lower():
-                        folder_location = root
-                        BtnDownInt = False
-                        BtnDel = True
-                        break
+                    if filename.endswith('.json'):
+                        json_file_path = os.path.join(root, filename)
+                        try:
+                            with open(json_file_path, 'r', encoding="utf-8") as f:
+                                data = json.load(f)
+                                sha256 = data.get('sha256')
+                                if sha256:
+                                    sha256 = sha256.upper()
+                                    if sha256 == sha256_value:
+                                        folder_location = root
+                                        BtnDownInt = False
+                                        BtnDel = True
+                                        break
+                        except (json.JSONDecodeError, OSError, IOError) as e:
+                            print(f"Error reading JSON file {json_file_path}: {e}")
+                        except Exception as e:
+                            print(f"Unexpected error reading JSON file {json_file_path}: {e}")
+                else:
+                    # filename_check
+                    for filename in files:
+                        if filename.lower() == model_filename.lower() or filename.lower() == cleaned_name(model_filename).lower():
+                            folder_location = root
+                            BtnDownInt = False
+                            BtnDel = True
+                            break
 
-            if folder_location != "None":
-                break
+                if folder_location != "None":
+                    break
 
         default_subfolder = sub_folder_value(content_type, desc)
         if default_subfolder != "None":
@@ -1098,8 +1121,8 @@ def get_proxies():
     proxies = {}
     if custom_proxy:
         if not disable_ssl:
-            if cabundle_path:
-                ssl = os.path(cabundle_path)
+            if cabundle_path and os.path.isfile(cabundle_path):
+                ssl = cabundle_path
         else:
             ssl = False
         proxies = {

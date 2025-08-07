@@ -164,23 +164,34 @@ def selected_to_queue(model_list, subfolder, download_start, create_json, curren
         model_name, model_id = _api.extract_model_info(model_string)
         for item in gl.json_data['items']:
             if int(item['id']) == int(model_id):
-                model_id, desc, content_type = item['id'], item['description'], item['type']
+                model_id = item['id']
+                desc = item.get('description', "")
+                content_type = item.get('type', "")
+                nsfw = item.get('nsfw', False)
+                creator = item.get('creator', None)
+                model_uploader = creator.get('username', None) if creator else None
                 version = item.get('modelVersions', [])[0]
-                version_name = version.get('name')
+                version_name = version.get('name', "")
+                version_id = version.get('id', None)
+                output_basemodel = version.get('baseModel', None)
                 files = version.get('files', [])
                 primary_file = next((file for file in files if file.get('primary', False)), None)
                 if primary_file:
                     model_filename = _api.cleaned_name(primary_file.get('name'))
                     model_sha256 = primary_file.get('hashes', {}).get('SHA256')
                     dl_url = primary_file.get('downloadUrl')
-                else:
+                elif files:
                     model_filename = _api.cleaned_name(files[0].get('name'))
                     model_sha256 = files[0].get('hashes', {}).get('SHA256')
                     dl_url = files[0].get('downloadUrl')
+                else:
+                    model_filename = None
+                    model_sha256 = None
+                    dl_url = None
                 break
-                
+
         model_folder = _api.contenttype_folder(content_type, desc)
-            
+
         default_subfolder = _api.sub_folder_value(content_type, desc)
         if default_subfolder != "None":
             default_subfolder = _file.convertCustomFolder(default_subfolder, output_basemodel, nsfw, model_uploader, model_name, model_id, version_name, version_id)
@@ -189,7 +200,7 @@ def selected_to_queue(model_list, subfolder, download_start, create_json, curren
             from_batch = False
             if platform.system() == "Windows":
                 subfolder = re.sub(r'[/:*?"<>|]', '', subfolder)
-            
+
             if not subfolder.startswith(os.sep):
                 subfolder = os.sep + subfolder
             install_path = model_folder + subfolder
@@ -199,7 +210,7 @@ def selected_to_queue(model_list, subfolder, download_start, create_json, curren
                 install_path = model_folder + default_subfolder
             else:
                 install_path = model_folder
-        
+
         model_item = create_model_item(dl_url, model_filename, install_path, model_name, version_name, model_sha256, model_id, create_json, from_batch)
         if model_item:
             gl.download_queue.append(model_item)
