@@ -102,8 +102,8 @@ def create_model_item(dl_url, model_filename, install_path, model_name, version_
     global dl_manager_count
     if model_id:
         model_id = int(model_id)
-    if model_sha256:
-        model_sha256 = model_sha256.upper()
+    if model_sha256 is not None:
+        model_sha256 = str(model_sha256).upper()
     if model_sha256 == "UNKNOWN":
         model_sha256 = None
     
