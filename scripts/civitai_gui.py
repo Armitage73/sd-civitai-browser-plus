@@ -46,6 +46,30 @@ if not forge:
 
 gl.init()
 
+def safe_str(value, default=""):
+    """Safely convert any value to string, handling various data types."""
+    try:
+        if value is None:
+            return default
+        elif isinstance(value, str):
+            return value
+        elif isinstance(value, (int, float, bool)):
+            return str(value)
+        elif isinstance(value, dict):
+            # For dicts, try to get a meaningful string representation
+            if 'name' in value:
+                return safe_str(value['name'], default)
+            elif 'title' in value:
+                return safe_str(value['title'], default)
+            else:
+                return str(value)
+        elif isinstance(value, list):
+            return str(value)
+        else:
+            return str(value)
+    except Exception:
+        return default
+
 def saveSettings(ust, ct, pt, st, bf, cj, td, ol, hi, sn, ss, ts):
     config = cmd_opts.ui_config_file
 
@@ -69,8 +93,15 @@ def saveSettings(ust, ct, pt, st, bf, cj, td, ol, hi, sn, ss, ts):
     try:
         with open(config, "r", encoding="utf8") as file:
             data = json.load(file)
-    except:
-        print(f"Cannot save settings, failed to open \"{file}\"")
+    except FileNotFoundError:
+        print(f"Config file not found, creating new one: {config}")
+        data = {}
+    except json.JSONDecodeError as e:
+        print(f"Invalid JSON in config file: {e}")
+        print("Please try to manually repair the file or remove it to reset settings.")
+        return
+    except Exception as e:
+        print(f"Cannot save settings, failed to open \"{config}\": {e}")
         print("Please try to manually repair the file or remove it to reset settings.")
         return
 
@@ -83,85 +114,244 @@ def saveSettings(ust, ct, pt, st, bf, cj, td, ol, hi, sn, ss, ts):
     data.update(settings_map)
 
     # Save the modified content back to the file
-    with open(config, 'w', encoding="utf-8") as file:
-        json.dump(data, file, indent=4)
-        print(f"Updated settings to: {config}")
+    try:
+        with open(config, 'w', encoding="utf-8") as file:
+            json.dump(data, file, indent=4)
+            print(f"Updated settings to: {config}")
+    except Exception as e:
+        print(f"Failed to save settings: {e}")
 
 def all_visible(html_check):
-    return gr.Button.update(visible="model-checkbox" in html_check)
+    """Determines if Select All button should be visible based on model availability."""
+    try:
+        # Always show the button if gl.json_data exists and has items
+        if hasattr(gl, 'json_data') and gl.json_data:
+            # Check if there are actual models in the data
+            if isinstance(gl.json_data, dict) and 'items' in gl.json_data:
+                visible = len(gl.json_data['items']) > 0
+            elif isinstance(gl.json_data, list):
+                visible = len(gl.json_data) > 0
+            else:
+                visible = bool(gl.json_data)
+        else:
+            # Fallback: check the html_check parameter
+            if isinstance(html_check, str) and html_check.strip():
+                # Try to parse as JSON list or check if it contains model data
+                try:
+                    model_list = json.loads(html_check)
+                    visible = bool(model_list and len(model_list) > 0)
+                except (json.JSONDecodeError, TypeError):
+                    # Check if HTML contains model elements (basic heuristic)
+                    visible = 'data-model-id' in html_check or 'class="model-card' in html_check
+            else:
+                visible = bool(html_check)
+    except Exception as e:
+        print(f"[all_visible] Error determining visibility: {e}")
+        # Default to visible to ensure button is available when needed
+        visible = True
+    
+    return gr.Button.update(visible=visible)
         
 def HTMLChange(input):
     return gr.HTML.update(value=input)
 
 def show_multi_buttons(model_list, type_list, version_value):
-    model_list = json.loads(model_list)
-    type_list = json.loads(type_list)
-    otherButtons = True
-    multi_file_subfolder = False
-    default_subfolder = "Only available if the selected files are of the same model type"
-    sub_folders = ["None"]
-    BtnDwn = version_value and not version_value.endswith('[Installed]') and not model_list
-    BtnDel = version_value.endswith('[Installed]')
-    
-    dot_subfolders = getattr(opts, "dot_subfolders", True)
-
-    multi = bool(model_list) and not len(gl.download_queue) > 0
-    if model_list:
-        otherButtons = False
-    if type_list and all(x == type_list[0] for x in type_list):
-        multi_file_subfolder = True
-        model_folder = os.path.join(_api.contenttype_folder(type_list[0]))
-        default_subfolder = "None"
-        try:
-            for root, dirs, _ in os.walk(model_folder, followlinks=True):
-                if dot_subfolders:
-                    dirs = [d for d in dirs if not d.startswith('.')]
-                    dirs = [d for d in dirs if not any(part.startswith('.') for part in os.path.join(root, d).split(os.sep))]
-                for d in dirs:
-                    sub_folder = os.path.relpath(os.path.join(root, d), model_folder)
-                    if sub_folder:
-                        sub_folders.append(f'{os.sep}{sub_folder}')
-            sub_folders.remove("None")
-            sub_folders = sorted(sub_folders, key=lambda x: (x.lower(), x))
-            sub_folders.insert(0, "None")
+    """Enhanced multi-button visibility logic with better error handling."""
+    try:
+        # Parse inputs safely
+        if isinstance(model_list, str):
+            try:
+                model_list = json.loads(model_list) if model_list.strip() else []
+            except json.JSONDecodeError:
+                model_list = []
+        
+        if isinstance(type_list, str):
+            try:
+                type_list = json.loads(type_list) if type_list.strip() else []
+            except json.JSONDecodeError:
+                type_list = []
+        
+        # Ensure lists are actually lists
+        if not isinstance(model_list, list):
+            model_list = []
+        if not isinstance(type_list, list):
+            type_list = []
             
-            list = set()
-            sub_folders = [x for x in sub_folders if not (x in list or list.add(x))]
-        except:
-            sub_folders = ["None"]
-    
-    return (gr.Button.update(visible=multi, interactive=multi), # Download Multi Button
-            gr.Button.update(visible=BtnDwn if multi else True if not version_value.endswith('[Installed]') else False), # Download Button
-            gr.Button.update(visible=BtnDel if not model_list else False), # Delete Button 
-            gr.Button.update(visible=otherButtons), # Save model info Button
-            gr.Button.update(visible=otherButtons), # Save images Button
-            gr.Dropdown.update(visible=multi, interactive=multi_file_subfolder, choices=sub_folders, value=default_subfolder) # Selected type sub folder
-            )
+        dot_subfolders = getattr(opts, "dot_subfolders", True)
+        download_queue = getattr(gl, 'download_queue', [])
+
+        # Debug print for troubleshooting
+        print(f"[show_multi_buttons] model_list length: {len(model_list)}, type_list length: {len(type_list)}, version_value: {version_value}, download_queue length: {len(download_queue)}")
+
+        # Determine if any models are selected
+        any_selected = len(model_list) > 0
+        
+        # Download All (multi) button should be visible if any models are selected
+        download_all_visible = any_selected
+        # Download All is interactive only if no download is in progress
+        download_all_interactive = any_selected and len(download_queue) == 0
+        
+        # Download single button: visible if not installed and not multi-select
+        download_single_visible = False
+        if not any_selected and version_value:
+            download_single_visible = not version_value.endswith('[Installed]')
+        
+        # Delete button: visible if installed and not multi-select
+        delete_visible = False
+        if not any_selected and version_value:
+            delete_visible = version_value.endswith('[Installed]')
+        
+        # Save info/images: visible if not multi-select
+        save_buttons_visible = not any_selected
+
+        # Multi-file subfolder logic
+        multi_file_subfolder = False
+        default_subfolder = "Only available if the selected files are of the same model type"
+        sub_folders = ["None"]
+        
+        if type_list and len(set(type_list)) == 1 and model_list:  # All types are the same
+            multi_file_subfolder = True
+            try:
+                model_folder = _api.contenttype_folder(type_list[0])
+                default_subfolder = "None"
+                
+                if os.path.exists(model_folder):
+                    for root, dirs, _ in os.walk(model_folder, followlinks=True):
+                        if dot_subfolders:
+                            dirs = [d for d in dirs if not d.startswith('.')]
+                            dirs = [d for d in dirs if not any(part.startswith('.') for part in os.path.join(root, d).split(os.sep))]
+                        
+                        for d in dirs:
+                            sub_folder = os.path.relpath(os.path.join(root, d), model_folder)
+                            if sub_folder and sub_folder != '.':
+                                sub_folders.append(f'{os.sep}{sub_folder}')
+                    
+                # Clean up subfolder list more efficiently
+                if len(sub_folders) > 1:  # Only process if there are subfolders beyond "None"
+                    # Remove duplicate "None" entries except the first one
+                    sub_folders = [sub_folders[0]] + [x for x in sub_folders[1:] if x != "None"]
+                    
+                    # Sort folders naturally (case-insensitive)
+                    if len(sub_folders) > 1:
+                        sub_folders[1:] = sorted(set(sub_folders[1:]), key=lambda x: x.lower())
+                    
+                    # Final duplicate removal while preserving order
+                    seen = set()
+                    sub_folders = [x for x in sub_folders if not (x in seen or seen.add(x))]
+                    
+            except Exception as e:
+                print(f"[show_multi_buttons] Error getting subfolders: {e}")
+                sub_folders = ["None"]
+                multi_file_subfolder = False
+
+        print(f"[show_multi_buttons] download_all_visible: {download_all_visible}, download_single_visible: {download_single_visible}, delete_visible: {delete_visible}, save_buttons_visible: {save_buttons_visible}, multi_file_subfolder: {multi_file_subfolder}")
+
+        # Set button label depending on queue state
+        download_all_label = "Add to Queue" if any_selected and len(download_queue) > 0 else "Download all selected"
+        
+        return (
+            gr.Button.update(visible=download_all_visible, interactive=download_all_interactive, value=download_all_label), # Download All (multi) Button
+            gr.Button.update(visible=download_single_visible, interactive=download_single_visible), # Download Button
+            gr.Button.update(visible=delete_visible, interactive=delete_visible), # Delete Button
+            gr.Button.update(visible=save_buttons_visible, interactive=save_buttons_visible), # Save model info Button
+            gr.Button.update(visible=save_buttons_visible, interactive=save_buttons_visible), # Save images Button
+            gr.Dropdown.update(visible=download_all_visible, interactive=multi_file_subfolder, choices=sub_folders, value=default_subfolder) # Selected type sub folder
+        )
+        
+    except Exception as e:
+        print(f"[show_multi_buttons] Unexpected error: {e}")
+        # Return safe defaults
+        return (
+            gr.Button.update(visible=False, interactive=False, value="Download all selected"),
+            gr.Button.update(visible=False, interactive=False),
+            gr.Button.update(visible=False, interactive=False),
+            gr.Button.update(visible=True, interactive=True),
+            gr.Button.update(visible=True, interactive=True),
+            gr.Dropdown.update(visible=False, interactive=False, choices=["None"], value="None")
+        )
 
 def txt2img_output(image_url):
-    clean_url = image_url[4:]
-    geninfo = _api.fetch_and_process_image(clean_url)
-    if geninfo:
-        nr = _download.random_number()
-        geninfo = nr + geninfo
-        return gr.Textbox.update(value=geninfo)
+    """Process image URL for txt2img with improved error handling."""
+    if not image_url:
+        return gr.Textbox.update(value="")
+        
+    try:
+        # Clean URL more safely
+        clean_url = image_url[4:] if len(image_url) > 4 and image_url.startswith('url:') else image_url
+        
+        geninfo = _api.fetch_and_process_image(clean_url)
+        if geninfo:
+            nr = _download.random_number() if hasattr(_download, 'random_number') else ""
+            geninfo = nr + geninfo
+            return gr.Textbox.update(value=geninfo)
+    except Exception as e:
+        print(f"[txt2img_output] Error processing image URL '{image_url}': {e}")
+    
+    return gr.Textbox.update(value="")
 
 def get_base_models():
-    api_url = 'https://civitai.com/api/v1/models?baseModels=GetModels'
-    json_return = _api.request_civit_api(api_url, True)
-    default_options = ["SD 1.4","SD 1.5","SD 1.5 LCM","SD 2.0","SD 2.0 768","SD 2.1","SD 2.1 768",
-    "SD 2.1 Unclip","SDXL 0.9","SDXL 1.0","SDXL 1.0 LCM","SDXL Distilled","SDXL Turbo","SDXL Lightning",
-    "Stable Cascade","Pony","SVD","SVD XT","Playground v2","PixArt a", "Flux.1 S", "Flux.1 D","Other"]
-    
-    if not isinstance(json_return, dict):
-        print("Couldn't fetch latest baseModel options, using default.")
-        return default_options
+    """Fetch base models with improved error handling and parsing."""
+    # Updated default options to match current API response (includes new models like Veo 3)
+    default_options = ["ODOR","SD 1.4","SD 1.5","SD 1.5 LCM","SD 1.5 Hyper","SD 2.0",
+                       "SD 2.0 768","SD 2.1","SD 2.1 768","SD 2.1 Unclip","SDXL 0.9",
+                       "SDXL 1.0","SD 3","SD 3.5","SD 3.5 Medium","SD 3.5 Large","SD 3.5 Large Turbo",
+                       "Pony","Flux.1 S","Flux.1 D","Flux.1 Kontext","AuraFlow","SDXL 1.0 LCM",
+                       "SDXL Distilled","SDXL Turbo","SDXL Lightning","SDXL Hyper","Stable Cascade",
+                       "SVD","SVD XT","Playground v2","PixArt a","PixArt E","Hunyuan 1","Hunyuan Video",
+                       "Lumina","Kolors","Illustrious","Mochi","LTXV","CogVideoX","NoobAI","Wan Video"
+                       ,"Wan Video 1.3B t2v","Wan Video 14B t2v","Wan Video 14B i2v 480p",
+                       "Wan Video 14B i2v 720p","HiDream","OpenAI","Imagen4","Veo 3","Other"]
     
     try:
-        options = json_return['error']['issues'][0]['unionErrors'][0]['issues'][0]['options']
-        return options
-    except (KeyError, IndexError) as e:
-        print(f"Basemodel fetch error extracting options: {e}")
+        api_url = 'https://civitai.com/api/v1/models?baseModels=GetModels'
+        json_return = _api.request_civit_api(api_url, True)
+        
+        if not isinstance(json_return, dict):
+            print("Couldn't fetch latest baseModel options, using default.")
+            return default_options
+        
+        # The API returns options in the error message structure
+        try:
+            # First try the old path structure (in case they fix it)
+            options = (json_return
+                      .get('error', {})
+                      .get('issues', [{}])[0]
+                      .get('unionErrors', [{}])[0]
+                      .get('issues', [{}])[0]
+                      .get('options', []))
+            
+            if isinstance(options, list) and len(options) > 0:
+                return options
+                
+            # New approach: Extract from the error message structure
+            error_data = json_return.get('error', {})
+            if 'message' in error_data:
+                # Parse the JSON string within the message
+                try:
+                    error_details = json.loads(error_data['message'])
+                    if isinstance(error_details, list) and len(error_details) > 0:
+                        # Navigate through the error structure to find values
+                        first_error = error_details[0]
+                        if 'errors' in first_error:
+                            for error_group in first_error['errors']:
+                                if isinstance(error_group, list) and len(error_group) > 0:
+                                    for error_item in error_group:
+                                        if isinstance(error_item, dict) and 'values' in error_item:
+                                            values = error_item['values']
+                                            if isinstance(values, list) and len(values) > 0:
+                                                print(f"Successfully extracted {len(values)} base model options from API error response.")
+                                                return values
+                except json.JSONDecodeError as e:
+                    print(f"Could not parse error message JSON: {e}")
+                                
+        except (IndexError, KeyError, TypeError) as e:
+            print(f"Basemodel fetch error extracting options: {e}")
+            
+        print("Could not extract options from API response, using default list.")
+        return default_options
+            
+    except Exception as e:
+        print(f"Unexpected error fetching base models: {e}")
         return default_options
 
 def on_ui_tabs():    
@@ -231,13 +421,13 @@ def on_ui_tabs():
                 with gr.Row(elem_id="pageBoxMobile"):
                     pass # Row used for button placement on mobile
             with gr.Row(elem_id="select_all_models_container"):
-                select_all = gr.Button(value="Select All", elem_id="select_all_models", visible=False)
+                select_all = gr.Button(value="Select All", elem_id="select_all_models", visible=True)  # Always visible
             with gr.Row():
                 list_html = gr.HTML(value='<div style="font-size: 24px; text-align: center; margin: 50px;">Click the search icon to load models.<br>Use the filter icon to filter results.</div>')
             with gr.Row():
                 download_progress = gr.HTML(value='<div style="min-height: 0px;"></div>', elem_id="DownloadProgress")
             with gr.Row():
-                list_models = gr.Dropdown(label="Model:", choices=[], interactive=False, elem_id="quicksettings1", value=None)
+                list_models = gr.Dropdown(label="Model:", choices=[], interactive=False, elem_id="quicksettings1", value=None, allow_custom_value=True)
                 list_versions = gr.Dropdown(label="Version:", choices=[], interactive=False, elem_id="quicksettings0", value=None)
                 file_list = gr.Dropdown(label="File:", choices=[], interactive=False, elem_id="file_list", value=None)
             with gr.Row():
@@ -321,10 +511,42 @@ def on_ui_tabs():
         
         def format_custom_subfolders():
             separator = '␞␞'
-            with open(gl.subfolder_json, 'r') as f:
-                data = json.load(f)
-            result = separator.join([f"{key}{separator}{value}" for key, value in data.items()])
-            return result
+            try:
+                with open(gl.subfolder_json, 'r') as f:
+                    data = json.load(f)
+                
+                # Ensure data is a dictionary
+                if not isinstance(data, dict):
+                    print(f"Warning: subfolder data is not a dict: {type(data)}")
+                    return ""
+                
+                result_parts = []
+                for key, value in data.items():
+                    # Convert key and value to strings and handle various data types
+                    try:
+                        # Handle key conversion safely
+                        key_str = safe_str(key)
+                        
+                        # Handle value conversion safely  
+                        value_str = safe_str(value)
+                        
+                        result_parts.append(f"{key_str}{separator}{value_str}")
+                        
+                    except Exception as e:
+                        print(f"CivitAI Browser+: Error: Failed to process custom subfolder item {repr(key)}: {e}")
+                        continue
+                
+                return separator.join(result_parts)
+                
+            except FileNotFoundError:
+                # File doesn't exist yet, return empty string
+                return ""
+            except json.JSONDecodeError as e:
+                print(f"CivitAI Browser+: Error: Invalid JSON in subfolder file: {e}")
+                return ""
+            except Exception as e:
+                print(f"CivitAI Browser+: Error: Failed to format custom subfolders: {e}")
+                return ""
 
         #Invisible triggers/variables
         #Yes, there is probably a much better way of passing variables/triggering functions between javascript and python
@@ -359,24 +581,38 @@ def on_ui_tabs():
         preview_finish = gr.Textbox(visible=False)
         ver_start = gr.Textbox(visible=False)
         ver_finish = gr.Textbox(visible=False)
-        installed_start = gr.Textbox(visible=None)
-        installed_finish = gr.Textbox(visible=None)
-        organize_start = gr.Textbox(visible=None)
-        organize_finish = gr.Textbox(visible=None)
+        installed_start = gr.Textbox(visible=False)
+        installed_finish = gr.Textbox(visible=False)
+        organize_start = gr.Textbox(visible=False)
+        organize_finish = gr.Textbox(visible=False)
         delete_finish = gr.Textbox(visible=False)
         current_model = gr.Textbox(visible=False)
         current_sha256 = gr.Textbox(visible=False)
+        # Remove the problematic progress_trigger that might cause issues
+        # progress_trigger = gr.Textbox(visible=False)
         model_preview_html_input = gr.Textbox(visible=False)
         
         def ToggleDate(toggle_date):
-            gl.sortNewest = toggle_date
+            if hasattr(gl, 'sortNewest'):
+                gl.sortNewest = bool(toggle_date) if toggle_date is not None else False
+            else:
+                print("[ToggleDate] Warning: gl.sortNewest attribute not found")
         
         def select_subfolder(sub_folder):
-            if sub_folder == "None" or sub_folder == "Only available if the selected files are of the same model type":
-                newpath = gl.main_folder
-            else:
-                newpath = gl.main_folder + sub_folder
-            return gr.Textbox.update(value=newpath)
+            try:
+                # Safely convert sub_folder to string
+                sub_folder_str = safe_str(sub_folder)
+                
+                if not sub_folder_str or sub_folder_str == "None" or sub_folder_str == "Only available if the selected files are of the same model type":
+                    newpath = safe_str(getattr(gl, 'main_folder', ''))
+                else:
+                    main_folder = safe_str(getattr(gl, 'main_folder', ''))
+                    newpath = main_folder + sub_folder_str
+                    
+                return gr.Textbox.update(value=newpath)
+            except Exception as e:
+                print(f"[select_subfolder] Error processing subfolder '{sub_folder}': {e}")
+                return gr.Textbox.update(value=safe_str(getattr(gl, 'main_folder', '')))
 
         # Javascript Functions #
         
@@ -413,6 +649,10 @@ def on_ui_tabs():
         queue_html_input.change(fn=None, _js="() => setSortable()")
         
         click_first_item.change(fn=None, _js="() => clickFirstFigureInColumn()")
+        
+        # Keep-alive mechanism for background downloads (simplified)
+        download_start.change(fn=None, _js="() => { console.log('Download started'); }")
+        download_finish.change(fn=None, _js="() => { console.log('Download finished'); }")
         
         # Filter button Functions #
         
@@ -463,10 +703,12 @@ def on_ui_tabs():
         
         civitai_text2img_input.change(fn=txt2img_output,inputs=civitai_text2img_input,outputs=civitai_text2img_output)
         
-        list_html_input.change(fn=all_visible, inputs=list_html, outputs=select_all)
+        # Show 'Select All' button based on model availability - improved logic
+        list_html_input.change(fn=all_visible, inputs=list_html_input, outputs=select_all)
         
         def update_models_dropdown(input):
-            if not gl.json_data:
+            """Updated with better error handling and cleaner logic."""
+            if not hasattr(gl, 'json_data') or not gl.json_data:
                 return (
                     gr.Dropdown.update(value=None, choices=[], interactive=False), # List models
                     gr.Dropdown.update(value=None, choices=[], interactive=False), # List version
@@ -487,15 +729,44 @@ def on_ui_tabs():
                     gr.Textbox.update(value='<div style="font-size: 24px; text-align: center; margin: 50px;">Click the search icon to load models.<br>Use the filter icon to filter results.</div>') # Model list
                 )
             
-            model_string = re.sub(r'\.\d{3}$', '', input)
-            model_name, model_id = _api.extract_model_info(model_string)
-            model_versions = _api.update_model_versions(model_id)
-            (html, tags, base_mdl, DwnButton, SaveImages, DelButton, filelist, filename, dl_url, id, current_sha256, install_path, sub_folder) = _api.update_model_info(model_string, model_versions.get('value'))
-            return (gr.Dropdown.update(value=model_string, interactive=True),
-                    model_versions,html,tags,base_mdl,filename,install_path,sub_folder,DwnButton,SaveImages,DelButton,filelist,dl_url,id,current_sha256,
+            try:
+                model_string = re.sub(r'[\._]\d{3,}$', '',str(input)) if input else ""
+                model_name, model_id = _api.extract_model_info(model_string)
+                model_versions = _api.update_model_versions(model_id)
+                
+                version_value = model_versions.get('value') if isinstance(model_versions, dict) else None
+                (html, tags, base_mdl, DwnButton, SaveImages, DelButton, 
+                 filelist, filename, dl_url, id, current_sha256, 
+                 install_path, sub_folder) = _api.update_model_info(model_string, version_value)
+                
+                return (
+                    gr.Dropdown.update(value=model_string, interactive=True, allow_custom_value=True),
+                    model_versions, html, tags, base_mdl, filename, install_path, sub_folder,
+                    DwnButton, SaveImages, DelButton, filelist, dl_url, id, current_sha256,
                     gr.Button.update(interactive=True),
                     gr.Textbox.update()
-                    )
+                )
+            except Exception as e:
+                print(f"[update_models_dropdown] Error: {e}")
+                return (
+                    gr.Dropdown.update(value=None, choices=[], interactive=False),
+                    gr.Dropdown.update(value=None, choices=[], interactive=False),
+                    gr.Textbox.update(value="Error loading model data"),
+                    gr.Textbox.update(value=None, interactive=False),
+                    gr.Textbox.update(value=None, interactive=False),
+                    gr.Textbox.update(value=None, interactive=False),
+                    gr.Textbox.update(value=None, interactive=False),
+                    gr.Dropdown.update(value=None, choices=[], interactive=False),
+                    gr.Button.update(interactive=False),
+                    gr.Button.update(interactive=False),
+                    gr.Button.update(interactive=False, visible=False),
+                    gr.Dropdown.update(value=None, choices=[], interactive=False),
+                    gr.Textbox.update(value=None),
+                    gr.Textbox.update(value=None),
+                    gr.Textbox.update(value=None),
+                    gr.Button.update(interactive=False),
+                    gr.Textbox.update(value='<div style="color: red;">Error loading model data</div>')
+                )
         
         model_select.change(
             fn=update_models_dropdown,
@@ -641,7 +912,6 @@ def on_ui_tabs():
         
         
         for component in [download_start, queue_trigger]:
-            component.change(fn=None, _js="() => setDownloadProgressBar()")
             component.change(
                 fn=_download.download_create_thread,
                 inputs=[download_finish, queue_trigger],
@@ -1019,11 +1289,17 @@ def on_ui_tabs():
     return (civitai_interface, tab_name, "civitai_interface"),
 
 def subfolder_list(folder, desc=None):
-    if folder == None:
-        return
-    model_folder = _api.contenttype_folder(folder, desc)
-    sub_folders = _file.getSubfolders(model_folder)
-    return sub_folders
+    """Get subfolder list with better error handling."""
+    if folder is None:
+        return []
+    
+    try:
+        model_folder = _api.contenttype_folder(folder, desc)
+        sub_folders = _file.getSubfolders(model_folder)
+        return sub_folders
+    except Exception as e:
+        print(f"Error getting subfolder list for {folder}: {e}")
+        return []
 
 def make_lambda(folder, desc):
     return lambda: {"choices": subfolder_list(folder, desc)}
@@ -1337,7 +1613,7 @@ def on_ui_settings():
     ]
 
     for folder in folders:
-        if folder == None:
+        if folder is None:
             continue
         desc = None
         if isinstance(folder, tuple):
@@ -1352,7 +1628,17 @@ def on_ui_settings():
             folder = "LORA"
             setting_name = "LORA_LoCon"
         
-        shared.opts.add_option(f"{setting_name}_default_subfolder", shared.OptionInfo("None", folder_name, gr.Dropdown, make_lambda(folder, desc), section=download, **({'category_id': cat_id} if ver_bool else {})))
+        shared.opts.add_option(
+            f"{setting_name}_default_subfolder", 
+            shared.OptionInfo(
+                "None", 
+                folder_name, 
+                gr.Dropdown, 
+                make_lambda(folder, desc), 
+                section=download, 
+                **({'category_id': cat_id} if ver_bool else {})
+            )
+        )
     
 script_callbacks.on_ui_tabs(on_ui_tabs)
 script_callbacks.on_ui_settings(on_ui_settings)
