@@ -529,22 +529,34 @@ def convertCustomFolder(folderValue, basemodel, nsfw, author, modelName, modelId
         "VERSIONID": _api.cleaned_name(str(versionId))
     }
 
-    if not nsfw:
-        segments = folderValue.split(os.sep)
-        segments = [seg for seg in segments if "{NSFW}" not in seg]
-        folderValue = os.sep.join(segments)
-    else:
-        replacements["NSFW"] = "nsfw"
+    # Ensure folderValue is a string
+    if not isinstance(folderValue, str):
+        try:
+            folderValue_str = str(folderValue)
+        except Exception as e:
+            print(f"Error: Failed to process custom subfolder: {type(folderValue).__name__} could not be converted to string: {folderValue}")
+            return ""
+        folderValue = folderValue_str
 
-    formatted_value = folderValue.format(**replacements)
-    
-    converted_folder = formatted_value.replace('/', os.sep).replace('\\', os.sep)
-    converted_folder = os.sep.join(part for part in converted_folder.split(os.sep) if part)
+    try:
+        if not nsfw:
+            segments = folderValue.split(os.sep)
+            segments = [seg for seg in segments if "{NSFW}" not in seg]
+            folderValue = os.sep.join(segments)
+        else:
+            replacements["NSFW"] = "nsfw"
 
-    if not converted_folder.startswith(os.sep):
-        converted_folder = os.sep + converted_folder
+        formatted_value = folderValue.format(**replacements)
+        converted_folder = formatted_value.replace('/', os.sep).replace('\\', os.sep)
+        converted_folder = os.sep.join(part for part in converted_folder.split(os.sep) if part)
 
-    return converted_folder
+        if not converted_folder.startswith(os.sep):
+            converted_folder = os.sep + converted_folder
+
+        return converted_folder
+    except Exception as e:
+        print(f"Error: Failed to process custom subfolder: {type(folderValue).__name__} - {e}")
+        return ""
 
 def getSubfolders(model_folder, basemodel=None, nsfw=None, author=None, modelName=None, modelId=None, versionName=None, versionId=None):
     try:
