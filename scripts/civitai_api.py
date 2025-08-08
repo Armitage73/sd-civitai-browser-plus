@@ -27,7 +27,10 @@ def contenttype_folder(content_type, desc=None, fromCheck=False, custom_folder=N
     use_LORA = getattr(opts, "use_LORA", False)
     folder = None
     if desc:
-        desc = desc.upper()
+        if isinstance(desc, str):
+            desc = desc.upper()
+        else:
+            desc = str(desc)
     else:
         desc = "PLACEHOLDER"
     if custom_folder:
@@ -200,7 +203,7 @@ def model_list_html(json_data):
                             json_file = json.load(f)
                             if isinstance(json_file, dict):
                                 sha256 = json_file.get('sha256')
-                                if sha256:
+                                if sha256 and isinstance(sha256, str):
                                     existing_files_sha256.add(sha256.upper())
                             else:
                                 print(f"Invalid JSON data in {json_path}. Expected a dictionary.")
@@ -226,7 +229,10 @@ def model_list_html(json_data):
         try:
             if item.get('modelVersions') and len(item['modelVersions']) > 0:
                 published_at = item['modelVersions'][0].get('publishedAt')
-                date = published_at.split('T')[0] if published_at else "Not Found"
+                if isinstance(published_at, str):
+                    date = published_at.split('T')[0]
+                else:
+                    date = "Not Found"
             else:
                 date = "Not Found"
         except (KeyError, IndexError, TypeError, AttributeError):
@@ -259,7 +265,9 @@ def model_list_html(json_data):
                     file_name = os.path.splitext(file['name'])[0]
                     file_extension = os.path.splitext(file['name'])[1]
                     file_name = f"{file_name}_{file['id']}{file_extension}"
-                    file_sha256 = file.get('hashes', {}).get('SHA256', "").upper()
+                    file_sha256 = file.get('hashes', {}).get('SHA256', "")
+                    if isinstance(file_sha256, str):
+                        file_sha256 = file_sha256.upper()
                     
                     #filename_check
                     name_match = file_name.lower() in existing_files
@@ -515,7 +523,9 @@ def update_model_versions(model_id, json_input=None):
             for version in versions:
                 versions_dict[version['name']].append(item["name"])
                 for version_file in version['files']:
-                    file_sha256 = version_file.get('hashes', {}).get('SHA256', "").upper()
+                    file_sha256 = version_file.get('hashes', {}).get('SHA256', "")
+                    if isinstance(file_sha256, str):
+                        file_sha256 = file_sha256.upper()
                     version_filename = os.path.splitext(version_file['name'])[0]
                     version_extension = os.path.splitext(version_file['name'])[1]
                     version_filename = f"{version_filename}_{version_file['id']}{version_extension}"
@@ -532,7 +542,8 @@ def update_model_versions(model_id, json_input=None):
                                     if isinstance(json_data, dict):
                                         sha256 = json_data.get('sha256')
                                         if sha256:
-                                            sha256 = sha256.upper()
+                                            if isinstance(sha256, str):
+                                                sha256 = sha256.upper()
                                             for version_name, _, file_sha256 in version_files:
                                                 if sha256 == file_sha256:
                                                     installed_versions.add(version_name)
@@ -563,10 +574,11 @@ def cleaned_name(file_name):
     else:
         illegal_chars_pattern = r'/'
 
+    if not isinstance(file_name, str):
+        file_name = str(file_name)
     name, extension = os.path.splitext(file_name)
     clean_name = re.sub(illegal_chars_pattern, '', name)
     clean_name = re.sub(r'\s+', ' ', clean_name.strip())
-
     return f"{clean_name}{extension}"
 
 def fetch_and_process_image(image_url):
@@ -621,7 +633,7 @@ def update_model_info(model_string=None, model_version=None, only_html=False, in
     else:
         model_id = input_id
     
-    if model_version and "[Installed]" in model_version:
+    if model_version and isinstance(model_version, str) and "[Installed]" in model_version:
         model_version = model_version.replace(" [Installed]", "")
     if model_id:
         output_html = ""
@@ -681,21 +693,22 @@ def update_model_info(model_string=None, model_version=None, only_html=False, in
                     output_basemodel = selected_version['baseModel']
                 for file in selected_version['files']:
                     dl_dict[file['name']] = file['downloadUrl']
-                    
                     if not model_filename:
-                        model_filename = os.path.splitext(file['name'])[0]
-                        model_extension = os.path.splitext(file['name'])[1]
+                        if isinstance(file['name'], str):
+                            model_filename = os.path.splitext(file['name'])[0]
+                            model_extension = os.path.splitext(file['name'])[1]
+                        else:
+                            model_filename = str(file['name'])
+                            model_extension = ''
                         model_filename = f"{model_filename}_{file['id']}{model_extension}"
                         dl_url = file['downloadUrl']
                         gl.json_info = item
                         sha256_value = file['hashes'].get('SHA256', 'Unknown')
-                        
                     size = file['metadata'].get('size', 'Unknown')
                     format = file['metadata'].get('format', 'Unknown')
                     fp = file['metadata'].get('fp', 'Unknown')
                     sizeKB = file.get('sizeKB', 0) * 1024
                     filesize = _download.convert_size(sizeKB)
-                    
                     unique_file_name = f"{size} {format} {fp} ({filesize})"
                     is_primary = file.get('primary', False)
                     file_list.append(unique_file_name)
@@ -705,8 +718,12 @@ def update_model_info(model_string=None, model_version=None, only_html=False, in
                     })
                     if is_primary:
                         default_file = unique_file_name
-                        model_filename = os.path.splitext(file['name'])[0]
-                        model_extension = os.path.splitext(file['name'])[1]
+                        if isinstance(file['name'], str):
+                            model_filename = os.path.splitext(file['name'])[0]
+                            model_extension = os.path.splitext(file['name'])[1]
+                        else:
+                            model_filename = str(file['name'])
+                            model_extension = ''
                         model_filename = f"{model_filename}_{file['id']}{model_extension}"
                         dl_url = file['downloadUrl']
                         gl.json_info = item
@@ -902,7 +919,7 @@ def update_model_info(model_string=None, model_version=None, only_html=False, in
                             with open(json_file_path, 'r', encoding="utf-8") as f:
                                 data = json.load(f)
                                 sha256 = data.get('sha256')
-                                if sha256:
+                                if sha256 and isinstance(sha256, str):
                                     sha256 = sha256.upper()
                                     if sha256 == sha256_value:
                                         folder_location = root
@@ -938,7 +955,10 @@ def update_model_info(model_string=None, model_version=None, only_html=False, in
             folder_path = folder_location
 
         relative_path = os.path.relpath(folder_location, model_folder)
-        default_subfolder = f'{os.sep}{relative_path}' if relative_path != "." else default_subfolder if BtnDel == False else "None"
+        if isinstance(relative_path, str):
+            default_subfolder = f'{os.sep}{relative_path}' if relative_path != "." else default_subfolder if BtnDel == False else "None"
+        else:
+            default_subfolder = default_subfolder if BtnDel == False else "None"
         if gl.isDownloading:
             item = gl.download_queue[0]
             if int(model_id) == int(item['model_id']):
@@ -1006,7 +1026,7 @@ def update_file_info(model_string, model_version, file_metadata):
     model_id = None
     model_name, model_id = extract_model_info(model_string)
     
-    if model_version and "[Installed]" in model_version:
+    if model_version and isinstance(model_version, str) and "[Installed]" in model_version:
         model_version = model_version.replace(" [Installed]", "")
     if model_id and model_version:
         for item in gl.json_data['items']:
@@ -1025,7 +1045,7 @@ def update_file_info(model_string, model_version, file_metadata):
                             pass
                         
                         if is_LORA and file_list:
-                            extracted_formats = [file.split(' ')[1] for file in file_list]
+                            extracted_formats = [file.split(' ')[1] if isinstance(file, str) and len(file.split(' ')) > 1 else '' for file in file_list]
                             if "SafeTensor" in extracted_formats and "PickleTensor" in extracted_formats:
                                 embed_check = True
                         

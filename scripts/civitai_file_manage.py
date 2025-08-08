@@ -1,4 +1,5 @@
 import json
+import threading
 import gradio as gr
 import urllib.request
 import urllib.parse
@@ -76,8 +77,10 @@ def delete_model(delete_finish=None, model_filename=None, model_string=None, lis
     model_folder = os.path.join(_api.contenttype_folder(selected_content_type, desc))
     
     # Delete based on provided SHA-256 hash
-    if sha256:
+    if sha256 and isinstance(sha256, str):
         sha256_upper = sha256.upper()
+    else:
+        sha256_upper = str(sha256)
         for root, _, files in os.walk(model_folder, followlinks=True):
             for file in files:
                 if file.endswith('.json'):
@@ -85,9 +88,11 @@ def delete_model(delete_finish=None, model_filename=None, model_string=None, lis
                     try:
                         with open(file_path, 'r', encoding="utf-8") as json_file:
                             data = json.load(json_file)
-                            file_sha256 = data.get('sha256', '')
-                            if file_sha256:
-                                file_sha256 = file_sha256.upper()
+                        file_sha256 = data.get('sha256', '')
+                        if isinstance(file_sha256, str):
+                            file_sha256 = file_sha256.upper()
+                        else:
+                            file_sha256 = str(file_sha256)
                     except Exception as e:
                         print(f"Failed to open: {file_path}: {e}")
                         file_sha256 = "0"
@@ -177,11 +182,15 @@ def save_preview(file_path, api_response, overwrite_toggle=False, sha256=None):
                 with open(json_file, 'r', encoding="utf-8") as f:
                     data = json.load(f)
                     if 'sha256' in data and data['sha256']:
-                        sha256 = data['sha256'].upper()
+                        if isinstance(data['sha256'], str):
+                            sha256 = data['sha256'].upper()
+                        else:
+                            sha256 = str(data['sha256'])
             except Exception as e:
                 print(f"Failed to open {json_file}: {e}")
     else:
-        sha256 = sha256.upper()
+        if isinstance(sha256, str):
+            sha256 = sha256.upper()
 
     for item in api_response["items"]:
         for version in item["modelVersions"]:
@@ -529,28 +538,40 @@ def convertCustomFolder(folderValue, basemodel, nsfw, author, modelName, modelId
         "VERSIONID": _api.cleaned_name(str(versionId))
     }
 
-    # Ensure folderValue is a string
+    # Only process if folderValue is a string
     if not isinstance(folderValue, str):
-        try:
-            folderValue_str = str(folderValue)
-        except Exception as e:
-            print(f"Error: Failed to process custom subfolder: {type(folderValue).__name__} could not be converted to string: {folderValue}")
-            return ""
-        folderValue = folderValue_str
+        print(f"Error: Failed to process custom subfolder: folderValue is not a string (type: {type(folderValue).__name__}, value: {folderValue})")
+        folderValue = str(folderValue)
 
     try:
         if not nsfw:
-            segments = folderValue.split(os.sep)
-            segments = [seg for seg in segments if "{NSFW}" not in seg]
-            folderValue = os.sep.join(segments)
+            if isinstance(folderValue, str):
+                segments = folderValue.split(os.sep)
+                segments = [seg for seg in segments if "{NSFW}" not in seg]
+                folderValue = os.sep.join(segments)
+            else:
+                print(f"Error: folderValue is not a string for split: {folderValue}")
+                folderValue = str(folderValue)
+                segments = folderValue.split(os.sep)
+                segments = [seg for seg in segments if "{NSFW}" not in seg]
+                folderValue = os.sep.join(segments)
         else:
             replacements["NSFW"] = "nsfw"
 
-        formatted_value = folderValue.format(**replacements)
+        if isinstance(folderValue, str):
+            formatted_value = folderValue.format(**replacements)
+        else:
+            print(f"Error: folderValue is not a string for format: {folderValue}")
+            formatted_value = str(folderValue).format(**replacements)
         converted_folder = formatted_value.replace('/', os.sep).replace('\\', os.sep)
-        converted_folder = os.sep.join(part for part in converted_folder.split(os.sep) if part)
+        if isinstance(converted_folder, str):
+            converted_folder = os.sep.join(part for part in converted_folder.split(os.sep) if part)
+        else:
+            print(f"Error: converted_folder is not a string for split: {converted_folder}")
+            converted_folder = str(converted_folder)
+            converted_folder = os.sep.join(part for part in converted_folder.split(os.sep) if part)
 
-        if not converted_folder.startswith(os.sep):
+        if isinstance(converted_folder, str) and not converted_folder.startswith(os.sep):
             converted_folder = os.sep + converted_folder
 
         return converted_folder
@@ -584,8 +605,11 @@ def getSubfolders(model_folder, basemodel=None, nsfw=None, author=None, modelNam
                 except Exception as e:
                     print(f"Error: Failed to process custom subfolder: {e}")
             else:
-                upper_value = value.upper()
-                if not upper_value.startswith(os.sep):
+                if isinstance(value, str):
+                    upper_value = value.upper()
+                else:
+                    upper_value = str(value).upper()
+                if isinstance(upper_value, str) and not upper_value.startswith(os.sep):
                     upper_value = os.sep + upper_value
                 sub_folders.append(upper_value)
         
@@ -606,7 +630,10 @@ def updateSubfolder(subfolderInput):
     with open(gl.subfolder_json, 'r') as f:
         data = json.load(f)
 
-    index, action, value = subfolderInput.split('.', 2)
+    if isinstance(subfolderInput, str):
+        index, action, value = subfolderInput.split('.', 2)
+    else:
+        index, action, value = str(subfolderInput).split('.', 2)
     index = str(index)
 
     if action == "delete":
@@ -656,47 +683,45 @@ def make_dir(path):
         print(f"Error creating directory: {e}")
 
 def save_model_info(install_path, file_name, sub_folder, sha256=None, preview_html=None, overwrite_toggle=False, api_response=None):
-    save_path, filename = get_save_path_and_name(install_path, file_name, api_response, sub_folder)
-    image_path = get_image_path(install_path, api_response, sub_folder)
-    json_file = os.path.join(install_path, f'{filename}.json')
-    make_dir(install_path)
-    
-    save_api_info = getattr(opts, "save_api_info", False)
-    use_local = getattr(opts, "local_path_in_html", False)
-    
-    if not api_response:
-        api_response = gl.json_data
-    
-    result = find_and_save(api_response, sha256, file_name, json_file, False, overwrite_toggle)
-    if result != "found":
-        result = find_and_save(api_response, sha256, file_name, json_file, True, overwrite_toggle)            
-    
-    if preview_html:
-        if use_local:
-            img_urls = re.findall(r'data-sampleimg="true" src=[\'"]?([^\'" >]+)', preview_html)
-            for i, img_url in enumerate(img_urls):
-                img_name = f'{filename}_{i}.jpg'
-                preview_html = preview_html.replace(img_url,f'{os.path.join(image_path, img_name)}')
-                
-        match = re.search(r'(\s*)<div class="model-block">', preview_html)
-        if match:
-            indentation = match.group(1)
-        else:
-            indentation = ''
-        css_link = f'<link rel="stylesheet" type="text/css" href="{css_path}">'
-        utf8_meta_tag = f'{indentation}<meta charset="UTF-8">'
-        head_section = f'{indentation}<head>{indentation}    {utf8_meta_tag}{indentation}    {css_link}{indentation}</head>'
-        HTML = head_section + preview_html
-        path_to_new_file = os.path.join(save_path, f'{filename}.html')
-        with open(path_to_new_file, 'wb') as f:
-            f.write(HTML.encode('utf8'))
-        print(f"HTML saved at \"{path_to_new_file}\"")
-        
-    if save_api_info:
-        path_to_new_file = os.path.join(save_path, f'{filename}.api_info.json')
-        if not os.path.exists(path_to_new_file) or overwrite_toggle:
-            with open(path_to_new_file, mode="w", encoding="utf-8") as f:
-                json.dump(gl.json_info, f, indent=4, ensure_ascii=False)
+    def do_save():
+        save_path, filename = get_save_path_and_name(install_path, file_name, api_response, sub_folder)
+        image_path = get_image_path(install_path, api_response, sub_folder)
+        json_file = os.path.join(install_path, f'{filename}.json')
+        make_dir(install_path)
+        save_api_info = getattr(opts, "save_api_info", False)
+        use_local = getattr(opts, "local_path_in_html", False)
+        if not api_response:
+            api_response = gl.json_data
+        result = find_and_save(api_response, sha256, file_name, json_file, False, overwrite_toggle)
+        if result != "found":
+            result = find_and_save(api_response, sha256, file_name, json_file, True, overwrite_toggle)
+        if preview_html:
+            if use_local:
+                img_urls = re.findall(r'data-sampleimg="true" src=[\'\"]?([^\'\" >]+)', preview_html)
+                for i, img_url in enumerate(img_urls):
+                    img_name = f'{filename}_{i}.jpg'
+                    preview_html = preview_html.replace(img_url,f'{os.path.join(image_path, img_name)}')
+            match = re.search(r'(\s*)<div class="model-block">', preview_html)
+            if match:
+                indentation = match.group(1)
+            else:
+                indentation = ''
+            css_link = f'<link rel="stylesheet" type="text/css" href="{css_path}">'
+            utf8_meta_tag = f'{indentation}<meta charset="UTF-8">'
+            head_section = f'{indentation}<head>{indentation}    {utf8_meta_tag}{indentation}    {css_link}{indentation}</head>'
+            HTML = head_section + preview_html
+            path_to_new_file = os.path.join(save_path, f'{filename}.html')
+            with open(path_to_new_file, 'wb') as f:
+                f.write(HTML.encode('utf8'))
+            print(f"HTML saved at \"{path_to_new_file}\"")
+        if save_api_info:
+            path_to_new_file = os.path.join(save_path, f'{filename}.api_info.json')
+            if not os.path.exists(path_to_new_file) or overwrite_toggle:
+                with open(path_to_new_file, mode="w", encoding="utf-8") as f:
+                    json.dump(gl.json_info, f, indent=4, ensure_ascii=False)
+    # Run all file operations in a background thread to avoid UI blocking
+    t = threading.Thread(target=do_save, daemon=True)
+    t.start()
 
     
 def find_and_save(api_response, sha256=None, file_name=None, json_file=None, no_hash=None, overwrite_toggle=None):

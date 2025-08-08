@@ -1,4 +1,4 @@
-from modules.shared import opts
+from modules.shared import cmd_opts, opts
 do_debug_print = getattr(opts, "civitai_debug_prints", False)
 def init():
     import warnings, os, json

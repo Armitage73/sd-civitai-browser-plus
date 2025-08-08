@@ -1,12 +1,24 @@
 import gradio as gr
-from modules import script_callbacks, shared
 import os
 import json
 import fnmatch
 import re
 import subprocess
-from modules.shared import opts, cmd_opts
-from modules.paths import extensions_dir
+
+# Robust import handling for optional modules
+try:
+    from modules import script_callbacks, shared
+    from modules.shared import opts, cmd_opts
+    from modules.options import categories
+    from modules.paths import extensions_dir
+except ImportError:
+    script_callbacks = None
+    shared = None
+    opts = None
+    cmd_opts = None
+    categories = None
+    extensions_dir = None
+
 from scripts.civitai_global import print, debug_print
 import scripts.civitai_global as gl
 import scripts.civitai_download as _download
@@ -22,24 +34,40 @@ def git_tag():
 try:
     import modules_forge
     forge = True
-    ver_bool = True
 except ImportError:
+    modules_forge = None
     forge = False
 
-if not forge:
+ver_bool = False  # Set default value
+
+if forge:
+    ver_bool = True
+else:
     try:
         from packaging import version
         ver = git_tag()
 
         if not ver:
             try:
-                from modules import launch_utils
+                # Try to import launch_utils if available
+                import modules.launch_utils as launch_utils
                 ver = launch_utils.git_tag()
-            except:
-                ver_bool = False
-        if ver:
-            ver = ver.split('-')[0].rsplit('-', 1)[0]
+            except ImportError:
+                launch_utils = None
+            except Exception:
+                launch_utils = None
+            if isinstance(ver, str):
+                ver_split = ver.split('-')
+                if isinstance(ver_split, list) and len(ver_split) > 0:
+                    ver_part = ver_split[0]
+                    if isinstance(ver_part, str):
+                        ver_rsplit = ver_part.rsplit('-', 1)
+                        if isinstance(ver_rsplit, list) and len(ver_rsplit) > 0:
+                            ver = ver_rsplit[0]
+        if isinstance(ver, str):
             ver_bool = version.parse(ver[0:]) >= version.parse("1.7")
+        else:
+            ver_bool = False
     except ImportError:
         print("Python module 'packaging' has not been imported correctly, please try to restart or install it manually.")
         ver_bool = False
@@ -94,15 +122,15 @@ def saveSettings(ust, ct, pt, st, bf, cj, td, ol, hi, sn, ss, ts):
         with open(config, "r", encoding="utf8") as file:
             data = json.load(file)
     except FileNotFoundError:
-        print(f"Config file not found, creating new one: {config}")
+    # print(f"Config file not found, creating new one: {config}")
         data = {}
     except json.JSONDecodeError as e:
-        print(f"Invalid JSON in config file: {e}")
-        print("Please try to manually repair the file or remove it to reset settings.")
+    # print(f"Invalid JSON in config file: {e}")
+    # print("Please try to manually repair the file or remove it to reset settings.")
         return
     except Exception as e:
-        print(f"Cannot save settings, failed to open \"{config}\": {e}")
-        print("Please try to manually repair the file or remove it to reset settings.")
+    # print(f"Cannot save settings, failed to open \"{config}\": {e}")
+    # print("Please try to manually repair the file or remove it to reset settings.")
         return
 
     # Remove any keys containing the text `civitai_interface`
@@ -117,9 +145,9 @@ def saveSettings(ust, ct, pt, st, bf, cj, td, ol, hi, sn, ss, ts):
     try:
         with open(config, 'w', encoding="utf-8") as file:
             json.dump(data, file, indent=4)
-            print(f"Updated settings to: {config}")
+            # print(f"Updated settings to: {config}")
     except Exception as e:
-        print(f"Failed to save settings: {e}")
+        pass
 
 def all_visible(html_check):
     """Determines if Select All button should be visible based on model availability."""
@@ -146,10 +174,8 @@ def all_visible(html_check):
             else:
                 visible = bool(html_check)
     except Exception as e:
-        print(f"[all_visible] Error determining visibility: {e}")
         # Default to visible to ensure button is available when needed
         visible = True
-    
     return gr.Button.update(visible=visible)
         
 def HTMLChange(input):
@@ -164,91 +190,67 @@ def show_multi_buttons(model_list, type_list, version_value):
                 model_list = json.loads(model_list) if model_list.strip() else []
             except json.JSONDecodeError:
                 model_list = []
-        
         if isinstance(type_list, str):
             try:
                 type_list = json.loads(type_list) if type_list.strip() else []
             except json.JSONDecodeError:
                 type_list = []
-        
         # Ensure lists are actually lists
         if not isinstance(model_list, list):
             model_list = []
         if not isinstance(type_list, list):
             type_list = []
-            
         dot_subfolders = getattr(opts, "dot_subfolders", True)
         download_queue = getattr(gl, 'download_queue', [])
-
-        # Debug print for troubleshooting
-        print(f"[show_multi_buttons] model_list length: {len(model_list)}, type_list length: {len(type_list)}, version_value: {version_value}, download_queue length: {len(download_queue)}")
-
         # Determine if any models are selected
         any_selected = len(model_list) > 0
-        
         # Download All (multi) button should be visible if any models are selected
         download_all_visible = any_selected
         # Download All is interactive only if no download is in progress
         download_all_interactive = any_selected and len(download_queue) == 0
-        
         # Download single button: visible if not installed and not multi-select
         download_single_visible = False
         if not any_selected and version_value:
             download_single_visible = not version_value.endswith('[Installed]')
-        
         # Delete button: visible if installed and not multi-select
         delete_visible = False
         if not any_selected and version_value:
             delete_visible = version_value.endswith('[Installed]')
-        
         # Save info/images: visible if not multi-select
         save_buttons_visible = not any_selected
-
         # Multi-file subfolder logic
         multi_file_subfolder = False
         default_subfolder = "Only available if the selected files are of the same model type"
         sub_folders = ["None"]
-        
         if type_list and len(set(type_list)) == 1 and model_list:  # All types are the same
             multi_file_subfolder = True
             try:
                 model_folder = _api.contenttype_folder(type_list[0])
                 default_subfolder = "None"
-                
                 if os.path.exists(model_folder):
                     for root, dirs, _ in os.walk(model_folder, followlinks=True):
                         if dot_subfolders:
                             dirs = [d for d in dirs if not d.startswith('.')]
+                            dirs = [d for d in dirs if not d.startswith('.')]
                             dirs = [d for d in dirs if not any(part.startswith('.') for part in os.path.join(root, d).split(os.sep))]
-                        
                         for d in dirs:
-                            sub_folder = os.path.relpath(os.path.join(root, d), model_folder)
                             if sub_folder and sub_folder != '.':
                                 sub_folders.append(f'{os.sep}{sub_folder}')
-                    
-                # Clean up subfolder list more efficiently
-                if len(sub_folders) > 1:  # Only process if there are subfolders beyond "None"
-                    # Remove duplicate "None" entries except the first one
-                    sub_folders = [sub_folders[0]] + [x for x in sub_folders[1:] if x != "None"]
-                    
-                    # Sort folders naturally (case-insensitive)
-                    if len(sub_folders) > 1:
-                        sub_folders[1:] = sorted(set(sub_folders[1:]), key=lambda x: x.lower())
-                    
-                    # Final duplicate removal while preserving order
-                    seen = set()
-                    sub_folders = [x for x in sub_folders if not (x in seen or seen.add(x))]
-                    
+                    # Clean up subfolder list more efficiently
+                    if len(sub_folders) > 1:  # Only process if there are subfolders beyond "None"
+                        # Remove duplicate "None" entries except the first one
+                        sub_folders = [sub_folders[0]] + [x for x in sub_folders[1:] if x != "None"]
+                        # Sort folders naturally (case-insensitive)
+                        if len(sub_folders) > 1:
+                            sub_folders[1:] = sorted(set(sub_folders[1:]), key=lambda x: x.lower())
+                        # Final duplicate removal while preserving order
+                        seen = set()
+                        sub_folders = [x for x in sub_folders if not (x in seen or seen.add(x))]
             except Exception as e:
-                print(f"[show_multi_buttons] Error getting subfolders: {e}")
                 sub_folders = ["None"]
                 multi_file_subfolder = False
-
-        print(f"[show_multi_buttons] download_all_visible: {download_all_visible}, download_single_visible: {download_single_visible}, delete_visible: {delete_visible}, save_buttons_visible: {save_buttons_visible}, multi_file_subfolder: {multi_file_subfolder}")
-
         # Set button label depending on queue state
         download_all_label = "Add to Queue" if any_selected and len(download_queue) > 0 else "Download all selected"
-        
         return (
             gr.Button.update(visible=download_all_visible, interactive=download_all_interactive, value=download_all_label), # Download All (multi) Button
             gr.Button.update(visible=download_single_visible, interactive=download_single_visible), # Download Button
@@ -257,9 +259,7 @@ def show_multi_buttons(model_list, type_list, version_value):
             gr.Button.update(visible=save_buttons_visible, interactive=save_buttons_visible), # Save images Button
             gr.Dropdown.update(visible=download_all_visible, interactive=multi_file_subfolder, choices=sub_folders, value=default_subfolder) # Selected type sub folder
         )
-        
     except Exception as e:
-        print(f"[show_multi_buttons] Unexpected error: {e}")
         # Return safe defaults
         return (
             gr.Button.update(visible=False, interactive=False, value="Download all selected"),
@@ -274,19 +274,16 @@ def txt2img_output(image_url):
     """Process image URL for txt2img with improved error handling."""
     if not image_url:
         return gr.Textbox.update(value="")
-        
     try:
         # Clean URL more safely
         clean_url = image_url[4:] if len(image_url) > 4 and image_url.startswith('url:') else image_url
-        
         geninfo = _api.fetch_and_process_image(clean_url)
         if geninfo:
             nr = _download.random_number() if hasattr(_download, 'random_number') else ""
             geninfo = nr + geninfo
             return gr.Textbox.update(value=geninfo)
     except Exception as e:
-        print(f"[txt2img_output] Error processing image URL '{image_url}': {e}")
-    
+        pass
     return gr.Textbox.update(value="")
 
 def get_base_models():
@@ -305,11 +302,8 @@ def get_base_models():
     try:
         api_url = 'https://civitai.com/api/v1/models?baseModels=GetModels'
         json_return = _api.request_civit_api(api_url, True)
-        
         if not isinstance(json_return, dict):
-            print("Couldn't fetch latest baseModel options, using default.")
             return default_options
-        
         # The API returns options in the error message structure
         try:
             # First try the old path structure (in case they fix it)
@@ -319,10 +313,8 @@ def get_base_models():
                       .get('unionErrors', [{}])[0]
                       .get('issues', [{}])[0]
                       .get('options', []))
-            
             if isinstance(options, list) and len(options) > 0:
                 return options
-                
             # New approach: Extract from the error message structure
             error_data = json_return.get('error', {})
             if 'message' in error_data:
@@ -339,19 +331,13 @@ def get_base_models():
                                         if isinstance(error_item, dict) and 'values' in error_item:
                                             values = error_item['values']
                                             if isinstance(values, list) and len(values) > 0:
-                                                print(f"Successfully extracted {len(values)} base model options from API error response.")
                                                 return values
                 except json.JSONDecodeError as e:
-                    print(f"Could not parse error message JSON: {e}")
-                                
+                    pass
         except (IndexError, KeyError, TypeError) as e:
-            print(f"Basemodel fetch error extracting options: {e}")
-            
-        print("Could not extract options from API response, using default list.")
+            pass
         return default_options
-            
     except Exception as e:
-        print(f"Unexpected error fetching base models: {e}")
         return default_options
 
 def on_ui_tabs():    
@@ -517,7 +503,7 @@ def on_ui_tabs():
                 
                 # Ensure data is a dictionary
                 if not isinstance(data, dict):
-                    print(f"Warning: subfolder data is not a dict: {type(data)}")
+                    # print(f"Warning: subfolder data is not a dict: {type(data)}")
                     return ""
                 
                 result_parts = []
@@ -868,6 +854,7 @@ def on_ui_tabs():
         )
         
         download_model.click(
+            # This triggers the robust, background-threaded download logic in civitai_download.py
             fn=_download.download_start,
             inputs=[
                 download_start,
@@ -892,6 +879,7 @@ def on_ui_tabs():
         )
         
         download_selected.click(
+            # This triggers the robust, background-threaded queue logic in civitai_download.py
             fn=_download.selected_to_queue,
             inputs=[
                 selected_model_list,
@@ -912,6 +900,7 @@ def on_ui_tabs():
         
         
         for component in [download_start, queue_trigger]:
+            # This triggers the robust, background-threaded download queue processor in civitai_download.py
             component.change(
                 fn=_download.download_create_thread,
                 inputs=[download_finish, queue_trigger],
@@ -967,6 +956,7 @@ def on_ui_tabs():
         )
         
         save_info.click(
+            # This triggers the robust, background-threaded file save logic in civitai_file_manage.py
             fn=_file.save_model_info,
             inputs=[
                 install_path,
@@ -979,6 +969,7 @@ def on_ui_tabs():
         )
         
         save_images.click(
+            # This triggers the robust, background-threaded image save logic in civitai_file_manage.py
             fn=_file.save_images,
             inputs=[
                 preview_html_input,
@@ -1308,7 +1299,6 @@ def on_ui_settings():
     if ver_bool:
         browser = ("civitai_browser", "Browser")
         download = ("civitai_browser_download", "Downloads")
-        from modules.options import categories
         categories.register_category("civitai_browser_plus", "CivitAI Browser+")
         cat_id = "civitai_browser_plus"
     else:

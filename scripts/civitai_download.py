@@ -103,7 +103,10 @@ def create_model_item(dl_url, model_filename, install_path, model_name, version_
     if model_id:
         model_id = int(model_id)
     if model_sha256 is not None:
-        model_sha256 = str(model_sha256).upper()
+        if isinstance(model_sha256, str):
+            model_sha256 = model_sha256.upper()
+        else:
+            model_sha256 = str(model_sha256).upper()
     if model_sha256 == "UNKNOWN":
         model_sha256 = None
     
@@ -179,10 +182,14 @@ def selected_to_queue(model_list, subfolder, download_start, create_json, curren
                 if primary_file:
                     model_filename = _api.cleaned_name(primary_file.get('name'))
                     model_sha256 = primary_file.get('hashes', {}).get('SHA256')
+                    if model_sha256 is not None and not isinstance(model_sha256, str):
+                        model_sha256 = str(model_sha256)
                     dl_url = primary_file.get('downloadUrl')
                 elif files:
                     model_filename = _api.cleaned_name(files[0].get('name'))
                     model_sha256 = files[0].get('hashes', {}).get('SHA256')
+                    if model_sha256 is not None and not isinstance(model_sha256, str):
+                        model_sha256 = str(model_sha256)
                     dl_url = files[0].get('downloadUrl')
                 else:
                     model_filename = None
@@ -235,7 +242,7 @@ def gr_progress_threadable():
     """
     
     # Gradio 3 does not need a wrapper
-    if not hasattr(gr, "__version__") or int(gr.__version__.split(".")[0]) <= 3:
+    if not hasattr(gr, "__version__") or (isinstance(gr.__version__, str) and int(gr.__version__.split(".")[0]) <= 3):
         return gr.Progress()
     
     gr_progress=gr.Progress()
@@ -267,17 +274,39 @@ def download_start(download_start, dl_url, model_filename, install_path, model_s
     if model_string:
         model_name, _ = _api.extract_model_info(model_string)
     model_item = create_model_item(dl_url, model_filename, install_path, model_name, version_name, model_sha256, model_id, create_json)
-    
     gl.download_queue.append(model_item)
-    
+
     if len(gl.download_queue) > 1:
         number = download_start
         total_count += 1
-    else: 
+    else:
         number = random_number(download_start)
         total_count = 1
         current_count = 0
-    
+
+    # Start background thread for download processing if not already running
+    if not hasattr(gl, 'download_thread') or not gl.download_thread or not gl.download_thread.is_alive():
+        def process_download_queue():
+            while gl.download_queue:
+                item = gl.download_queue[0]
+                try:
+                    # Use a background progress object that does not depend on UI focus
+                    progress = gr.Progress() if queue else None
+                    download_file(
+                        item['dl_url'],
+                        item['model_filename'],
+                        item['install_path'],
+                        item['model_id'],
+                        progress
+                    )
+                except Exception as e:
+                    print(f"Download error: {e}")
+                finally:
+                    gl.download_queue.pop(0)
+        # Use a true background thread, not tied to Gradio or UI events
+        gl.download_thread = threading.Thread(target=process_download_queue, daemon=True)
+        gl.download_thread.start()
+
     html = download_manager_html(current_html)
 
     return  (
@@ -783,7 +812,10 @@ def remove_from_queue(dl_id):
             return
 
 def arrange_queue(input):
-    id_and_index = input.split('.')
+    if isinstance(input, str):
+        id_and_index = input.split('.')
+    else:
+        id_and_index = str(input).split('.')
     dl_id = int(id_and_index[0])
     index = int(id_and_index[1]) + 1
     for item in gl.download_queue:
@@ -793,6 +825,8 @@ def arrange_queue(input):
             break
     
 def get_style(size, left_border):
+    if not isinstance(size, (str, int, float)):
+        size = str(size)
     return f"flex-grow: {size};" + ("border-left: 1px solid var(--border-color-primary);" if left_border else "") + "padding: 5px 10px 5px 10px;width: 0;align-self: center;"
 
 def download_manager_html(current_html):
