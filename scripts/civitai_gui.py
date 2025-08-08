@@ -234,6 +234,7 @@ def show_multi_buttons(model_list, type_list, version_value):
                             dirs = [d for d in dirs if not d.startswith('.')]
                             dirs = [d for d in dirs if not any(part.startswith('.') for part in os.path.join(root, d).split(os.sep))]
                         for d in dirs:
+                            sub_folder = os.path.relpath(os.path.join(root, d), model_folder)
                             if sub_folder and sub_folder != '.':
                                 sub_folders.append(f'{os.sep}{sub_folder}')
                     # Clean up subfolder list more efficiently
